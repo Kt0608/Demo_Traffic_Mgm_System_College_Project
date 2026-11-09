@@ -114,10 +114,16 @@ class IndoreRoundaboutEnv(gym.Env):
         terminated = traci.simulation.getTime() >= 3600
         truncated = False
 
+        # info = {
+        #     **info_metrics,
+        #     "simulation_time": traci.simulation.getTime(),
+        #     "n_vehicles": traci.vehicle.getNumber(),
+        # }
+
         info = {
             **info_metrics,
             "simulation_time": traci.simulation.getTime(),
-            "n_vehicles": traci.vehicle.getNumber(),
+            "n_vehicles": traci.vehicle.getIDCount(),
         }
 
         return state, reward, terminated, truncated, info
