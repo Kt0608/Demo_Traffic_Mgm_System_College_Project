@@ -1,0 +1,20 @@
+# Python cache & virtual environments
+__pycache__/
+*.py[cod]
+venv/
+.env/
+
+# RL training logs & intermediate checkpoints
+logs/
+models/checkpoints/
+
+# SUMO runtime output & temporary route files
+tripinfo.xml
+trips.trips.xml
+*.rou.alt.xml
+*.log
+*.log.txt
+
+# Raw map exports
+*.osm
+*.osm.xml

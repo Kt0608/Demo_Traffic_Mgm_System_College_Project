@@ -1,0 +1,23 @@
+<configuration>
+    <input>
+        <net-file value="cleanedindorenetwork.net.xml"/>
+        <route-files value="indore_traffic.rou.xml"/>
+    </input>
+    <time>
+        <begin value="0"/>
+        <end value="3600"/>
+        <step-length value="1"/>
+    </time>
+    <processing>
+        <!-- Suppress per-step console output during RL training -->
+        <no-step-log value="true"/>
+    </processing>
+    <output>
+        <!-- Collect trip statistics for post-training analysis -->
+        <tripinfo-output value="tripinfo.xml"/>
+    </output>
+    <gui_only>
+        <start value="true"/>
+        <quit-on-end value="false"/>
+    </gui_only>
+</configuration>
