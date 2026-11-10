@@ -4,6 +4,7 @@ __pycache__/
 venv/
 .env/
 .temp/
+.github/
 
 # RL training logs & intermediate checkpoints
 logs/
