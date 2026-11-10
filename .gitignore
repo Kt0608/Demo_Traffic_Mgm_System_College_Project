@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 venv/
 .env/
+.temp/
 
 # RL training logs & intermediate checkpoints
 logs/
