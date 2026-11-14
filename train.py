@@ -1,141 +1,82 @@
-# import os
-# from stable_baselines3 import PPO
-# from stable_baselines3.common.monitor import Monitor
-# from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
-# from env import IndoreRoundaboutEnv
-
-
-# def make_env(use_gui=False):
-#     """Factory that creates a monitored training environment."""
-#     os.makedirs("logs", exist_ok=True)
-#     env = IndoreRoundaboutEnv(use_gui=use_gui)
-#     # Monitor records episode rewards/lengths for TensorBoard / progress logging
-#     env = Monitor(env, filename="logs/monitor")
-#     return env
-
-
-# def main():
-#     # --- Training environment (GUI OFF for speed) ---
-#     train_env = make_env(use_gui=False)
-
-#     # --- PPO agent ---
-#     model = PPO(
-#         "MlpPolicy",
-#         train_env,
-#         verbose=1,
-#         learning_rate=3e-4,
-#         n_steps=2048,
-#         batch_size=64,
-#         gamma=0.99,
-#         ent_coef=0.01,          # encourage exploration across 6 junctions
-#         tensorboard_log="./logs/tensorboard/"
-#     )
-
-#     # --- Callbacks ---
-#     # Save a checkpoint every 10,000 steps so a crash doesn't lose all progress
-#     checkpoint_cb = CheckpointCallback(
-#         save_freq=10_000,
-#         save_path="./models/checkpoints/",
-#         name_prefix="indore_ppo",
-#         verbose=1
-#     )
-
-#     print("Starting PPO training on Indore arterial grid network (6 junctions)...")
-#     print("Checkpoints saved every 10,000 steps → models/checkpoints/")
-#     print("TensorBoard logs → logs/tensorboard/\n")
-
-#     # FIX: 500,000 timesteps — the original 10,000 was far too short for 6 junctions
-#     model.learn(
-#         total_timesteps=5000,
-#         callback=checkpoint_cb,
-#         progress_bar=True       # requires tqdm: pip install tqdm rich
-#     )
-
-#     # --- Save final model ---
-#     os.makedirs("models", exist_ok=True)
-#     model.save("models/indore_ppo_traffic_agent")
-#     print("\nTraining complete! Model saved to models/indore_ppo_traffic_agent.zip")
-
-#     train_env.close()
-
-
-# def evaluate(n_episodes=3):
-#     """
-#     Run the trained model in SUMO-GUI so you can watch it control traffic.
-#     Usage: call evaluate() from a separate script or add --eval flag.
-#     """
-#     from stable_baselines3 import PPO
-
-#     env = IndoreRoundaboutEnv(use_gui=True)   # GUI ON for visualization
-#     model = PPO.load("models/indore_ppo_traffic_agent", env=env)
-
-#     for ep in range(n_episodes):
-#         obs, _ = env.reset()
-#         done = False
-#         total_reward = 0.0
-#         while not done:
-#             action, _ = model.predict(obs, deterministic=True)
-#             obs, reward, terminated, truncated, info = env.step(action)
-#             total_reward += reward
-#             done = terminated or truncated
-#         print(f"Episode {ep + 1}: total reward = {total_reward:.2f} | "
-#               f"avg wait = {info['avg_waiting_time']:.2f}s | "
-#               f"arrived = {info['arrived_vehicles']:.0f} vehicles")
-
-#     env.close()
-
-
-# if __name__ == "__main__":
-#     main()
-
 import os
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback, CallbackList
 from env import IndoreRoundaboutEnv
+from shared_state import get_config_snapshot, live_metrics, state_lock
 
 
-def main():
-    train_env = IndoreRoundaboutEnv(use_gui=False)
-    
-    # Checkpoints callback to save every 5,000 steps
-    checkpoint_cb = CheckpointCallback(
-        save_freq=5_000,
-        save_path="./models/checkpoints/",
-        name_prefix="indore_ppo",
-        verbose=1
-    )
+class DashSteeringCallback(BaseCallback):
+    """
+    Custom SB3 Callback that reads live learning_rate and target_episodes from
+    shared_state.global_config every step without interrupting model.learn().
+    """
+    def __init__(self, verbose=0):
+        super().__init__(verbose)
+        self.last_lr = None
 
+    def _on_step(self) -> bool:
+        cfg = get_config_snapshot()
+
+        # 1. Dynamically update optimizer learning rate if changed on Dash UI
+        new_lr = float(cfg.get("learning_rate", 3e-4))
+        if self.last_lr != new_lr and new_lr > 0:
+            self.model.learning_rate = new_lr
+            self.model.lr_schedule = lambda _: new_lr
+            if hasattr(self.model.policy, "optimizer"):
+                for param_group in self.model.policy.optimizer.param_groups:
+                    param_group["lr"] = new_lr
+            self.last_lr = new_lr
+
+        # 2. Check if target episodes count has been reached
+        target_eps = int(cfg.get("target_episodes", 50))
+        with state_lock:
+            current_ep = int(live_metrics.get("episode", 1))
+
+        if current_ep > target_eps:
+            print(f"\n[DASH STEERING] Reached Target Episodes ({target_eps}). Stopping training cleanly.")
+            return False
+
+        return True
+
+
+def start_training_loop(use_gui=False, total_timesteps=500_000):
+    """
+    Entry point for Thread 1 (The RL Agent & SUMO Engine).
+    Automatically detects existing checkpoints and matches action/observation dimensions.
+    """
     os.makedirs("models", exist_ok=True)
     os.makedirs("models/checkpoints", exist_ok=True)
 
-    # Automatically detect the current training stage based on existing files
+    # Check if a pre-existing checkpoint exists (which uses legacy 4-TLS dimensions)
+    checkpoint_files = [
+        ("models/indore_ppo_400k.zip", "models/indore_ppo_500k_final"),
+        ("models/indore_ppo_300k.zip", "models/indore_ppo_400k"),
+        ("models/indore_ppo_200k.zip", "models/indore_ppo_300k"),
+        ("models/indore_ppo_100k.zip", "models/indore_ppo_200k"),
+    ]
+    existing_ckpt = None
+    save_name = "models/indore_ppo_100k"
 
-    # IMPORTANT , READ THIS 
-    # Hey , if you wanna change the total timesteps 
-    tar_steps=1000
+    for ckpt_path, next_save in checkpoint_files:
+        if os.path.exists(ckpt_path):
+            existing_ckpt = ckpt_path
+            save_name = next_save
+            break
 
-    if os.path.exists("models/indore_ppo_400k.zip"):
-        print("Found 400k checkpoint. Resuming for final 100k steps (Target: 500k)...")
-        model = PPO.load("models/indore_ppo_400k.zip", env=train_env, verbose=1)
-        target_steps = tar_steps
-        save_name = "models/indore_ppo_500k_final"
-    elif os.path.exists("models/indore_ppo_300k.zip"):
-        print("Found 300k checkpoint. Resuming for next 100k steps (Target: 400k)...")
-        model = PPO.load("models/indore_ppo_300k.zip", env=train_env, verbose=1)
-        target_steps = tar_steps
-        save_name = "models/indore_ppo_400k"
-    elif os.path.exists("models/indore_ppo_200k.zip"):
-        print("Found 200k checkpoint. Resuming for next 100k steps (Target: 300k)...")
-        model = PPO.load("models/indore_ppo_200k.zip", env=train_env, verbose=1)
-        target_steps = tar_steps
-        save_name = "models/indore_ppo_300k"
-    elif os.path.exists("models/indore_ppo_100k.zip"):
-        print("Found 100k checkpoint. Resuming for next 100k steps (Target: 200k)...")
-        model = PPO.load("models/indore_ppo_100k.zip", env=train_env, verbose=1)
-        target_steps = tar_steps
-        save_name = "models/indore_ppo_200k"
+    # Try loading checkpoint with legacy_4_tls_mode=True first if checkpoint exists
+    if existing_ckpt:
+        print(f"Found checkpoint {existing_ckpt}. Loading into Digital Twin environment...")
+        try:
+            train_env = IndoreRoundaboutEnv(use_gui=use_gui, legacy_4_tls_mode=True)
+            model = PPO.load(existing_ckpt, env=train_env, verbose=1)
+        except ValueError:
+            # If the checkpoint was already trained with all 6 TLS IDs
+            train_env.close()
+            train_env = IndoreRoundaboutEnv(use_gui=use_gui, legacy_4_tls_mode=False)
+            model = PPO.load(existing_ckpt, env=train_env, verbose=1)
     else:
-        print("No checkpoints found. Starting fresh training (Target: 100k)...")
+        print("No checkpoints found. Starting fresh 6-Intersection PPO training...")
+        train_env = IndoreRoundaboutEnv(use_gui=use_gui, legacy_4_tls_mode=False)
         model = PPO(
             "MlpPolicy",
             train_env,
@@ -144,23 +85,31 @@ def main():
             n_steps=2048,
             batch_size=64,
             gamma=0.99,
-            ent_coef=0.01
+            ent_coef=0.01,
         )
-        target_steps = tar_steps
-        save_name = "models/indore_ppo_100k"
 
-    print(f"Starting training session toward target: {save_name}...")
-    model.learn(
-        total_timesteps=tar_steps,
-        callback=checkpoint_cb,
-        reset_num_timesteps=False,
-        progress_bar=True
+    checkpoint_cb = CheckpointCallback(
+        save_freq=5_000,
+        save_path="./models/checkpoints/",
+        name_prefix="indore_ppo",
+        verbose=1,
     )
+    steering_cb = DashSteeringCallback()
+    callbacks = CallbackList([checkpoint_cb, steering_cb])
 
-    model.save(save_name)
-    print(f"\nPhase complete! Saved model to {save_name}.zip")
-    train_env.close()
+    print(f"Starting Digital Twin RL training loop (Target save: {save_name})...")
+    try:
+        model.learn(
+            total_timesteps=total_timesteps,
+            callback=callbacks,
+            reset_num_timesteps=False,
+            progress_bar=False,  # Disabled in background thread to keep console clean
+        )
+        model.save(save_name)
+        print(f"\nPhase complete! Saved model to {save_name}.zip")
+    finally:
+        train_env.close()
 
 
 if __name__ == "__main__":
-    main()
+    start_training_loop(use_gui=False, total_timesteps=100_000)
