@@ -26,87 +26,67 @@ from shared_state import (
 class IndoreRoundaboutEnv(gym.Env):
     metadata = {"render_modes": ["human"]}
 
+    # Vehicles/sec injected by the static route file (randomTrips -p 2  ->  0.5 veh/s).
+    # Lower this together with a larger -p if the roads still jam.
+    STATIC_RATE_VPS = 0.5
+
     def __init__(
         self,
         net_file="cleanedindorenetwork.net.xml",
         route_file="indore_traffic.rou.xml",
         use_gui=False,
-        legacy_4_tls_mode=False,
     ):
-        """
-        legacy_4_tls_mode:
-          If True, keeps action_space=MultiDiscrete([2]*4) and obs_size=41 so existing
-          saved checkpoints (models/indore_ppo_100k.zip, etc.) load without shape errors,
-          while still controlling & monitoring all 6 intersections in the network.
-        """
         super(IndoreRoundaboutEnv, self).__init__()
 
         self.net_file = net_file
         self.route_file = route_file
         self.use_gui = use_gui
         self.sumoBinary = "sumo-gui" if self.use_gui else "sumo"
-        self.legacy_4_tls_mode = legacy_4_tls_mode
 
-        # The 6 actual signalized intersections from cleanedindorenetwork.net.xml
+        # The 4 signalized intersections in the new network
         self.real_tls_ids = [
-            "5697428980",
-            "5697428981",
-            "5697428983",
-            "cluster2020642749_2020642752_2020642756_2020642762_#4more",
-            "cluster_2020642637_2020642641_2020642651_2023505448",
+            "clusterJ1_J10_J11_J6_#3more",
             "joinedS_2020642670_2020642679_2020642684_2020642689",
+            "cluster10735211605_5697428980_5697428981_5697428983_#4more",
+            "clusterJ19_J20_J21_J22_#4more",
         ]
 
-        # Incoming lanes grouped by each of the 6 intersections for the UI Heatmap/Bar Grid
+        # Incoming lanes per intersection (single source of truth)
+        tls_incoming = [
+            ["1023336853#2_0", "1023336853#2_1", "1023336853#2_2",
+             "1497309185_0", "1497309185_1", "1497309185_2",
+             "191495050#5_0", "191495050#5_1", "191495050#5_2",
+             "E8_0", "E8_1"],
+            ["1497606153#1_0", "1497606153#1_1", "1497606153#2_0", "1497606153#2_1",
+             "191494996#1_0", "191494996#1_1", "191494996#1_2",
+             "191494996#2_0", "191494996#2_1",
+             "191494999#0_0", "191494999#0_1",
+             "191495002#7_0", "191495002#7_1", "191495002#7_2",
+             "191495034#0_0", "191495034#0_1", "191495034#1_0", "191495034#1_1"],
+            ["191494993#4.47_0", "191494993#4.47_1", "191494993#4.47_2",
+             "191495001#4_0", "191495001#4_1", "191495001#4_2",
+             "191495045#3.26_0", "191495045#3.26_1", "191495045#3.26_2",
+             "191774924#2_0", "191774924#2_1", "191774924#2_2"],
+            ["191495016#1.1772_0", "191495016#1.1772_1", "191495016#1.1772_2",
+             "191495043#2.317_0", "191495043#2.317_1", "191495043#2.317_2",
+             "191495049#6.135_0", "191495049#6.135_1", "191495049#6.135_2",
+             "320521586#9.120_0", "320521586#9.120_1", "320521586#9.120_2"],
+        ]
+
+        # Incoming lanes grouped by intersection for the UI queue grid
         self.intersection_lanes_map = {
-            INTERSECTION_NAMES[0]: ["191495045#3_0", "191495045#3_1"],
-            INTERSECTION_NAMES[1]: ["191774924#2_0", "191774924#2_1"],
-            INTERSECTION_NAMES[2]: ["191495001#4_0", "191495001#4_1"],
-            INTERSECTION_NAMES[3]: [
-                "191495016#1_0", "191495016#1_1", "320521586#9_0",
-                "191495043#2_0", "191495043#2_1", "191495049#6_0", "191495049#6_1"
-            ],
-            INTERSECTION_NAMES[4]: [
-                "191495045#4_0", "191495045#4_1", "191774924#3_0",
-                "191774924#3_1", "191495001#5_0", "191495001#5_1"
-            ],
-            INTERSECTION_NAMES[5]: [
-                "191495034#1_0", "191495034#1_1", "191495002#7_0", "191495002#7_1",
-                "191494999#0_0", "191494999#0_1", "1497606153#1_0", "1497606153#1_1",
-                "191494996#2_0", "191494996#2_1", "191495034#0_0", "191495034#0_1",
-                "1497606153#2_0", "1497606153#2_1", "191494996#1_0", "191494996#1_1"
-            ],
+            INTERSECTION_NAMES[i]: lanes for i, lanes in enumerate(tls_incoming)
         }
 
-        # Map raw TLS ID -> Human-readable name for EV approaching status
+        # Raw TLS ID -> human-readable name for EV approaching status
         self.tls_id_to_name = {
             tls_id: INTERSECTION_NAMES[i] for i, tls_id in enumerate(self.real_tls_ids)
         }
 
-        # Complete list of 37 monitored incoming lanes (preserves exact compatibility with your checkpoints)
-        self.monitored_lanes = [
-            "1023336853#2_0", "1023336853#2_1", "1023336853#2_2",
-            "1497309185_0", "1497309185_1", "1497309185_2",
-            "191495050#5_0", "191495050#5_1",
-            "1497606153#1_0", "1497606153#1_1", "1497606153#2_0", "1497606153#2_1",
-            "191494996#1_0", "191494996#1_1", "191494996#2_0", "191494996#2_1",
-            "191494999#0_0", "191494999#0_1", "191495002#7_0", "191495002#7_1",
-            "191495034#0_0", "191495034#0_1", "191495034#1_0", "191495034#1_1",
-            "191495001#5_0", "191495001#5_1", "191495045#4_0", "191495045#4_1",
-            "191774924#3_0", "191774924#3_1", "191495016#1_0", "191495016#1_1",
-            "191495043#2_0", "191495043#2_1", "191495049#6_0", "191495049#6_1",
-            "320521586#9_0",
-        ]
+        # All 53 monitored incoming lanes, flattened in intersection order
+        self.monitored_lanes = [lane for lanes in tls_incoming for lane in lanes]
 
-        if self.legacy_4_tls_mode:
-            self.tls_ids = [
-                "cluster2020642749_2020642752_2020642756_2020642762_#4more",
-                "joinedS_2020642670_2020642679_2020642684_2020642689",
-                "cluster_2020642637_2020642641_2020642651_2023505448",
-                "5697428980",
-            ]
-        else:
-            self.tls_ids = list(self.real_tls_ids)
+        self.tls_ids = list(self.real_tls_ids)
 
         # Episode duration tracking (3600 seconds / 5 seconds per step = 720 steps)
         self.max_steps = 720
@@ -216,6 +196,10 @@ class IndoreRoundaboutEnv(gym.Env):
             "--no-step-log", "true",
             "--start", "true",
             "--quit-on-end", "true",
+            "--time-to-teleport", "120",          # clear gridlocked vehicles instead of freezing the net
+            "--end", "3600",                      # keep SUMO alive even if the static route file runs out of vehicles
+            "--error-log", "sumo_error.log",      # real reason if SUMO dies
+            "--message-log", "sumo_messages.log",
         ]
 
         try:
@@ -224,6 +208,12 @@ class IndoreRoundaboutEnv(gym.Env):
             self._register_custom_types_and_routes()
         except Exception as e:
             print(f"\n[ERROR] SUMO failed to start: {e}\n")
+            for log in ("sumo_error.log", "sumo_messages.log"):
+                if os.path.exists(log):
+                    with open(log, errors="ignore") as f:
+                        tail = f.read()[-1500:]
+                    if tail.strip():
+                        print(f"--- {log} ---\n{tail}\n")
             raise e
 
         with state_lock:
@@ -283,13 +273,14 @@ class IndoreRoundaboutEnv(gym.Env):
         if not self._registered_route_ids:
             return
 
-        # Base rate is ~1 veh/sec in the static route file for t < 600s.
-        # For density > 1.0 (or t >= 600s), inject extra vehicles proportionally.
-        base_active = 1.0 if current_sim_time < 600 else 0.0
-        extra_rate_per_sec = max(0.0, density_multiplier - base_active)
+        # The static route file already supplies STATIC_RATE_VPS vehicles/sec for the whole hour
+        # (generate it with randomTrips -p <1/STATIC_RATE_VPS>). The density slider scales
+        # that baseline: 1.0x = static file only, 2.0x = double, 0.5x = half.
+        static_rate = self.STATIC_RATE_VPS
+        extra_rate_per_sec = max(0.0, density_multiplier - 1.0) * static_rate
 
-        # If density < 1.0 during t < 600s, probabilistically remove newly departed vehicles
-        if density_multiplier < 1.0 and current_sim_time < 600:
+        # If density < 1.0, probabilistically remove newly departed vehicles
+        if density_multiplier < 1.0:
             removal_prob = 1.0 - density_multiplier
             for v_id in traci.simulation.getDepartedIDList():
                 if not v_id.startswith("EV_") and random.random() < removal_prob:
@@ -402,7 +393,7 @@ class IndoreRoundaboutEnv(gym.Env):
         switches_this_step = 0
         if control_mode == "RL":
             for idx, tls_id in enumerate(self.real_tls_ids):
-                # Map action index safely whether in 4-TLS legacy mode or 6-TLS mode
+                # One action per traffic light (4 TLS)
                 act_idx = idx % len(actions)
                 if actions[act_idx] == 1:
                     if current_sim_time - self.last_switch_time.get(tls_id, 0.0) >= self.min_green_duration:
@@ -427,7 +418,15 @@ class IndoreRoundaboutEnv(gym.Env):
         step_arrived_count = 0
 
         for _ in range(5):
-            traci.simulationStep()
+            try:
+                traci.simulationStep()
+            except traci.exceptions.FatalTraCIError:
+                print("[ERROR] SUMO closed the connection mid-episode. Last lines of sumo_error.log:")
+                if os.path.exists("sumo_error.log"):
+                    with open("sumo_error.log", errors="ignore") as f:
+                        print(f.read()[-1500:])
+                self._traci_connected = False
+                raise
             sim_now = traci.simulation.getTime()
 
             # Track departing vehicles
@@ -573,7 +572,7 @@ class IndoreRoundaboutEnv(gym.Env):
                 waiting_time = traci.vehicle.getWaitingTime(veh_id)
                 total_waiting_time += waiting_time
                 if traci.vehicle.getTypeID(veh_id) == "emergency" and waiting_time > 0:
-                    emergency_penalty += waiting_time * 50.0
+                    emergency_penalty += min(waiting_time, 60.0) * 20.0
             except traci.TraCIException:
                 pass
 

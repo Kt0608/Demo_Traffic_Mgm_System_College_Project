@@ -47,7 +47,7 @@ def start_training_loop(use_gui=False, total_timesteps=500_000):
     os.makedirs("models", exist_ok=True)
     os.makedirs("models/checkpoints", exist_ok=True)
 
-    # Check if a pre-existing checkpoint exists (which uses legacy 4-TLS dimensions)
+    # Resume from an existing checkpoint if one matches the current 4-TLS / 53-lane layout
     checkpoint_files = [
         ("models/indore_ppo_400k.zip", "models/indore_ppo_500k_final"),
         ("models/indore_ppo_300k.zip", "models/indore_ppo_400k"),
@@ -63,20 +63,14 @@ def start_training_loop(use_gui=False, total_timesteps=500_000):
             save_name = next_save
             break
 
-    # Try loading checkpoint with legacy_4_tls_mode=True first if checkpoint exists
+    # Load checkpoint if one exists
     if existing_ckpt:
         print(f"Found checkpoint {existing_ckpt}. Loading into Digital Twin environment...")
-        try:
-            train_env = IndoreRoundaboutEnv(use_gui=use_gui, legacy_4_tls_mode=True)
-            model = PPO.load(existing_ckpt, env=train_env, verbose=1)
-        except ValueError:
-            # If the checkpoint was already trained with all 6 TLS IDs
-            train_env.close()
-            train_env = IndoreRoundaboutEnv(use_gui=use_gui, legacy_4_tls_mode=False)
-            model = PPO.load(existing_ckpt, env=train_env, verbose=1)
+        train_env = IndoreRoundaboutEnv(use_gui=use_gui)
+        model = PPO.load(existing_ckpt, env=train_env, verbose=1)
     else:
-        print("No checkpoints found. Starting fresh 6-Intersection PPO training...")
-        train_env = IndoreRoundaboutEnv(use_gui=use_gui, legacy_4_tls_mode=False)
+        print("No checkpoints found. Starting fresh 4-Intersection PPO training...")
+        train_env = IndoreRoundaboutEnv(use_gui=use_gui)
         model = PPO(
             "MlpPolicy",
             train_env,

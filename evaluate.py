@@ -88,6 +88,22 @@ class MetricsCollector:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Find the newest trained model automatically
+# ══════════════════════════════════════════════════════════════════════════════
+
+def find_latest_model(search_dirs=("models", "models/checkpoints")):
+    """Return the newest .zip model path (without the .zip extension), or None."""
+    import glob
+    candidates = []
+    for d in search_dirs:
+        candidates.extend(glob.glob(os.path.join(d, "*.zip")))
+    if not candidates:
+        return None
+    newest = max(candidates, key=os.path.getmtime)
+    return newest[:-4]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Run baseline — SUMO controls signals with its default fixed-time plan
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -287,8 +303,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate Indore Traffic RL Agent")
     parser.add_argument("--gui",              action="store_true", help="Open SUMO-GUI during evaluation")
     parser.add_argument("--baseline-only",    action="store_true", help="Run only the baseline (no model needed)")
-    parser.add_argument("--model",            default="models/indore_ppo_traffic_agent", help="Path to trained model (without .zip)")
+    parser.add_argument("--model",            default=None, help="Path to trained model (without .zip). Default: newest .zip in models/ or models/checkpoints/")
     args = parser.parse_args()
+
+    if args.model is None and not args.baseline_only:
+        args.model = find_latest_model()
+        if args.model:
+            print(f"[INFO] Using newest model: {args.model}.zip")
+        else:
+            print("[ERROR] No model found in models/ or models/checkpoints/. Run training first, or use --baseline-only.")
+            sys.exit(1)
+    if args.model is None:
+        args.model = "baseline"
 
     baseline_collector = run_baseline(use_gui=args.gui)
 

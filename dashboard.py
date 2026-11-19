@@ -143,7 +143,7 @@ app.layout = html.Div([
                 style={"margin": "0", "fontSize": "22px", "fontWeight": "900", "letterSpacing": "-0.5px"},
             ),
             html.Div(
-                "6-INTERSECTION SUMO + TRACI + STABLE-BASELINES3 PPO LIVE TELEMETRY & STEERING",
+                "4-INTERSECTION SUMO + TRACI + STABLE-BASELINES3 PPO LIVE TELEMETRY & STEERING",
                 style={"fontSize": "12px", "fontWeight": "700", "marginTop": "4px"},
             ),
         ]),
@@ -352,11 +352,11 @@ app.layout = html.Div([
                 dcc.Graph(id="chart-global-queue", config={"displayModeBar": False}, style={"height": "260px"}),
             ], style={**BRUTAL_CARD_STYLE, "backgroundColor": PURE_WHITE, "marginBottom": "18px"}),
 
-            # Row 2: Chart 2 (6-Intersection Queue Grid) & Chart 3 (Live Cumulative RL Reward Curve)
+            # Row 2: Chart 2 (4-Intersection Queue Grid) & Chart 3 (Live Cumulative RL Reward Curve)
             html.Div([
                 html.Div([
                     html.Div(
-                        "CHART 2 // 6-INTERSECTION REAL-TIME QUEUE CONGESTION GRID",
+                        "CHART 2 // 4-INTERSECTION REAL-TIME QUEUE CONGESTION GRID",
                         style={"fontWeight": "900", "fontSize": "13px", "marginBottom": "6px"},
                     ),
                     dcc.Graph(id="chart-intersection-grid", config={"displayModeBar": False}, style={"height": "260px"}),
@@ -568,8 +568,8 @@ def cb_update_telemetry(_):
             ))
     _apply_brutal_chart_layout(fig_queue, yaxis_title="STOPPED VEHICLES")
 
-    # ── CHART 2: 6-Intersection Congestion Bar Grid (Green to Gridlock Red) ──
-    int_names_short = ["J1: MR10", "J2: Ring S", "J3: Ring W", "J4: VijayNgr", "J5: Radisson", "J6: BombayH"]
+    # ── CHART 2: 4-Intersection Congestion Bar Grid (Green to Gridlock Red) ──
+    int_names_short = ["J1: Satya Sai", "J2: Vijay Nagar", "J3: Radisson", "J4: Bombay Hospital"]
     int_counts = [m["intersection_queues"].get(full_name, 0) for full_name in INTERSECTION_NAMES]
     bar_colors = []
     for c in int_counts:
@@ -587,7 +587,7 @@ def cb_update_telemetry(_):
         textposition="auto",
         marker=dict(color=bar_colors, line=dict(color=PURE_BLACK, width=3)),
     ))
-    _apply_brutal_chart_layout(fig_grid, yaxis_title="QUEUE COUNT", xaxis_title="6 SIGNALIZED INTERSECTIONS")
+    _apply_brutal_chart_layout(fig_grid, yaxis_title="QUEUE COUNT", xaxis_title="4 SIGNALIZED INTERSECTIONS")
 
     # ── CHART 3: Live Cumulative RL Reward Curve ──
     fig_reward = go.Figure()

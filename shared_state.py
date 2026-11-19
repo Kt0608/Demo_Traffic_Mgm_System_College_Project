@@ -9,21 +9,19 @@ from collections import deque
 # Global re-entrant lock for thread-safe reads/writes between Thread 1 (RL/SUMO) and Thread 2 (Dash)
 state_lock = threading.RLock()
 
-# Human-readable labels for the 6 signalized intersections in cleanedindorenetwork.net.xml
+# Human-readable labels for the 4 signalized intersections (same order as env.real_tls_ids)
 INTERSECTION_NAMES = [
-    "J1: MR-10 North (5697428980)",
-    "J2: Ring Rd South (5697428981)",
-    "J3: Ring Rd West (5697428983)",
-    "J4: Vijay Nagar (Cluster 2749)",
-    "J5: Radisson Sq (radisson_tls)",
-    "J6: Bombay Hosp (Roundabout)",
+    "J1: Satya Sai",
+    "J2: vijay nagar",
+    "J3: Radisson",
+    "J4:  Bombay hosp",
 ]
 
 # Two-Way Steering Configuration (Written by Dash UI -> Read by env.py & train.py)
 global_config = {
     "control_mode": "RL",           # "RL" (PPO Agent) or "FIXED" (SUMO Default Timer)
     "traffic_density": 1.0,         # 0.5x to 3.0x dynamic traffic spawner multiplier
-    "target_episodes": 50,          # Target episodes to run in current session
+    "target_episodes": 150,          # Target episodes to run in current session
     "learning_rate": 3e-4,          # Live PPO learning rate
     "step_delay_ms": 0,             # Artificial delay per step (0ms to 500ms) for visual inspection
     "spawn_ev": False,              # Trigger flag set by "DISPATCH EMERGENCY VEHICLE" button
@@ -58,7 +56,7 @@ live_metrics = {
     "throughput_per_min": 0.0,      # Rolling vehicles arriving at destination per minute
     "phase_flicker_rate": 0.0,      # Signal phase switches per minute across network
 
-    # 6-Intersection Real-Time Queue Breakdown
+    # 4-Intersection Real-Time Queue Breakdown
     "intersection_queues": {name: 0 for name in INTERSECTION_NAMES},
 
     # Time-series deques for live Plotly charts
